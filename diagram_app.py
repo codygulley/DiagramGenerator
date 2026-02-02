@@ -6,10 +6,8 @@ import tkinter as tk
 from tkinter import filedialog
 from tkinter import ttk, font as tkfont
 from typing import List, Optional
-import os
-import json
-import platform
-import subprocess
+import prefs
+from theme import palette_for_theme
 
 from models import (
     Actor,
@@ -51,12 +49,11 @@ class DiagramApp:
         self.small_font.configure(size=9)
 
         # Theme & preferences: load saved pref and detect system
-        self.config = self.load_preferences()
+        self.config = prefs.load_preferences()
         self.user_theme_pref = self.config.get('theme', 'system')
-        # determine effective theme
         eff = self.user_theme_pref
         if eff == 'system':
-            eff = self.detect_system_theme()
+            eff = prefs.detect_system_theme()
         # palette will be set by apply_theme
         self.apply_theme(eff)
 
@@ -250,103 +247,12 @@ class DiagramApp:
         return self.interaction_manager.delete_interaction()
 
     # ----------------- Theme & preferences -----------------
-    def get_config_path(self) -> str:
-        """Return a path to the user config file for saving preferences."""
-        try:
-            if os.name == 'nt':
-                appdata = os.environ.get('APPDATA') or os.path.expanduser('~')
-                cfg_dir = os.path.join(appdata, 'DiagramGenerator')
-            else:
-                cfg_dir = os.path.expanduser('~')
-            os.makedirs(cfg_dir, exist_ok=True)
-            return os.path.join(cfg_dir, 'diagram_config.json')
-        except Exception:
-            return os.path.join(os.path.expanduser('~'), '.diagram_config.json')
-
-    def load_preferences(self) -> dict:
-        path = self.get_config_path()
-        try:
-            if os.path.exists(path):
-                with open(path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except Exception:
-            pass
-        return {}
-
     def save_preferences(self):
-        path = self.get_config_path()
-        try:
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(self.config, f)
-        except Exception:
-            pass
-
-    def detect_system_theme(self) -> str:
-        """Return 'dark' or 'light' based on OS settings where possible."""
-        try:
-            system = platform.system()
-            if system == 'Windows':
-                try:
-                    import winreg
-                    key = r'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize'
-                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
-                        val = winreg.QueryValueEx(k, 'AppsUseLightTheme')[0]
-                        return 'light' if val == 1 else 'dark'
-                except Exception:
-                    return 'light'
-            elif system == 'Darwin':
-                try:
-                    p = subprocess.run(['defaults', 'read', '-g', 'AppleInterfaceStyle'], capture_output=True, text=True)
-                    out = (p.stdout or p.stderr or '').strip()
-                    return 'dark' if out.lower().startswith('dark') else 'light'
-                except Exception:
-                    return 'light'
-        except Exception:
-            pass
-        return 'light'
+        prefs.save_preferences(self.config)
 
     def apply_theme(self, theme_name: str):
         """Apply either 'light' or 'dark' palette to the app chrome and widgets."""
-        theme = theme_name.lower() if theme_name else 'light'
-        if theme == 'dark':
-            # Neutral dark greys; make the app chrome & modals match the canvas for a consistent dark UI
-            palette = {
-                # set app background equal to canvas background so modals and root chrome all use the same dark gray
-                'app_bg': '#111217',
-                'card_bg': '#111217',
-                'text_fg': '#e6eef6',
-                'muted_fg': '#9aa3ad',
-                'accent': '#4a90e2',
-                'card_border': '#0b1116',
-                # make canvas match card for consistent dark look
-                'canvas_bg': '#111217',
-                # actor box colors: slightly lighter than card so text pops
-                'actor_fill': '#181b22',
-                'actor_outline': '#262a31',
-                'actor_text': '#e6eef6',
-                'label_fg': '#e6eef6',
-                'index_fg': '#9aa3ad',
-                'preview_line': '#6b7280',
-                'lifeline': '#2f3440'
-            }
-        else:
-            palette = {
-                'app_bg': '#f5f7fa',
-                'card_bg': '#ffffff',
-                'text_fg': '#111827',
-                'muted_fg': '#6b7280',
-                'accent': '#4a90e2',
-                'card_border': '#e6e9ef',
-                # keep canvas same as card for consistent look
-                'canvas_bg': '#ffffff',
-                'actor_text': '#111111',
-                'label_fg': '#222222',
-                'index_fg': '#666666',
-                'preview_line': '#999999',
-                'actor_fill': '#f0f0ff',
-                'actor_outline': '#000000',
-                'lifeline': '#888888'
-             }
+        palette = palette_for_theme(theme_name)
         self.palette = palette
         # apply root bg
         try:
@@ -398,7 +304,7 @@ class DiagramApp:
         except Exception:
             pass
         # store current theme
-        self.current_theme = theme
+        self.current_theme = theme_name.lower() if theme_name else 'light'
         # re-draw to apply color changes
         try:
             self.redraw()
@@ -431,7 +337,7 @@ class DiagramApp:
 
         eff = self.user_theme_pref
         if eff == 'system':
-            eff = self.detect_system_theme()
+            eff = prefs.detect_system_theme()
         self.apply_theme(eff)
 
     def export_dialog(self):
