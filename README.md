@@ -17,34 +17,34 @@ The application emphasizes a modern, themable UI and supports exporting the diag
 - Add labels to interactions (visible above the line).
 - Dark and light themes; preference saved to a config file and defaults to the OS system theme.
 - Modern-themed dialogs for entering actor names and interaction labels.
-- Export to PNG and JPEG. PNG export supports a transparency option (chroma-keying the canvas background).
+- Export to PNG and JPEG. PNG export supports an optional transparency mode (chroma-keying the canvas background).
 
 ## Quickstart
 
 1. (Optional) Create a virtual environment and activate it:
 
-```bash
-python -m venv .venv
-# Windows (cmd.exe)
-.venv\Scripts\activate
-# macOS / Linux
-source .venv/bin/activate
-```
+    ```bash
+    python -m venv .venv
+    # Windows (cmd.exe)
+    .venv\Scripts\activate
+    # macOS / Linux
+    source .venv/bin/activate
+    ```
 
 2. Install dependencies (Pillow is required for exporting images):
 
-```bash
-pip install pillow
-```
+    ```bash
+    pip install pillow
+    ```
 
 3. Run the app from the project root:
 
-```bash
-python main.py
-```
+    ```bash
+    python main.py
+    ```
 
 Notes:
-- The export functionality uses Pillow. On Windows, if PostScript conversion is used the app may also require Ghostscript for accurate PostScript -> image conversion. If Ghostscript is not found, the app falls back to a screen-capture method (ImageGrab), which requires the app window to be visible on screen.
+- The `main.py` file is now a tiny launcher that imports and runs the application from `diagram_app.py` (the UI and app logic were split into separate modules for clarity).
 
 ## Export / Transparency details
 
@@ -65,26 +65,40 @@ If you encounter errors that mention Ghostscript, installing Ghostscript and add
 
 ## File / Module layout (high-level)
 
-- `main.py` — main application UI and canvas logic.
-- `models.py` — dataclasses and layout constants (Actor, Interaction, sizing constants).
+This project was recently refactored to split responsibilities into smaller modules. High-level layout:
+
+- `main.py` — small launcher (bootstrap). Keeps run configuration simple for IDEs.
+- `diagram_app.py` — the main application class (`DiagramApp`) that composes the UI and coordinates components.
+- `canvas_controller.py` — `CanvasController` handles canvas drawing and mouse interactions (press/drag/release) and is responsible for rendering actors, lifelines and interactions.
+- `interaction_manager.py` — `InteractionManager` handles the interactions listbox and related actions (select, edit label, move up/down, delete).
+- `models.py` — dataclasses and layout/constants (Actor, Interaction, sizing and color constants).
 - `dialogs.py` — themed modal dialogs (and a simple fallback) used by the app.
-- `export_utils.py` — small helpers for export (Ghostscript detection, chroma-key transparency helpers).
+- `export_utils.py` — export helpers (ghostscript detection, PostScript -> Pillow flow, ImageGrab fallback, chroma-key transparency).
+
+Developer notes / rationale
+
+- The controllers/managers receive the `app` instance and operate on `app` state rather than importing `DiagramApp`; this avoids circular imports and keeps modules decoupled.
+- Export logic is centralized in `export_utils.export_canvas(canvas, root, out_path, transparent)` so UI code stays thin and easier to test.
+- UI initialization remains in `diagram_app.py`, but it can be split further into builder functions (left/right panel builders) if desired.
 
 ## Troubleshooting
 
 - Add Actor / Label dialogs not showing or errors on theme change: restart the application after code changes. The app loads modules at startup.
-- Export errors mentioning Ghostscript: install Ghostscript (https://www.ghostscript.com/) and add it to your PATH, or rely on the ImageGrab fallback by ensuring Pillow supports it.
+- Export errors mentioning Ghostscript: install Ghostscript (https://www.ghostscript.com/) and add it to your PATH, or rely on the ImageGrab fallback by ensuring Pillow supports it and the app window is visible.
 - If the UI looks off on your platform (native widgets drawing differently), some widgets intentionally use native dialogs (file save) which will not be themed.
+
+## Running the testable parts (developer hints)
+
+- `export_utils.py` contains pure logic that is easy to unit test. You can write tests that mock a canvas object and Pillow calls.
+- `canvas_controller.py` and `interaction_manager.py` are thin wrappers around the GUI state and are best tested by driving small functional tests or by isolating their logic behind interfaces/mocks.
 
 ## Roadmap / Future improvements
 
-- Move the entire export pipeline into `export_utils.py` and add unit tests for it.
 - Add undo/redo for actor and interaction changes.
-- Support for lifelines with custom styling and activation boxes.
 - Better alignment/snapping and grid support for actor placement.
 - Multi-page/long diagrams with scrolling and scaling.
 - Export to SVG and/or direct PlantUML generation.
-- Add a small project file format (save/load diagrams as JSON).
+- Add a small project file format (save/load diagrams as JSON) and tests for export utilities.
 
 ## Contributing
 
