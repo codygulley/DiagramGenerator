@@ -109,6 +109,11 @@ class InteractionManager:
             return
         self.app.interactions[idx-1], self.app.interactions[idx] = self.app.interactions[idx], self.app.interactions[idx-1]
         self.update_interaction_listbox()
+        # ensure only the intended item is selected (clear any previous selection first)
+        try:
+            self.listbox.select_clear(0, tk.END)
+        except Exception:
+            pass
         self.listbox.select_set(idx-1)
         self.app.canvas_controller.redraw()
 
@@ -121,6 +126,11 @@ class InteractionManager:
             return
         self.app.interactions[idx+1], self.app.interactions[idx] = self.app.interactions[idx], self.app.interactions[idx+1]
         self.update_interaction_listbox()
+        # ensure only the intended item is selected (clear any previous selection first)
+        try:
+            self.listbox.select_clear(0, tk.END)
+        except Exception:
+            pass
         self.listbox.select_set(idx+1)
         self.app.canvas_controller.redraw()
 
