@@ -3,9 +3,7 @@
 This module is a thin wrapper that manipulates the `app.interactions` list and updates
 UI widgets owned by the app.
 """
-from typing import Optional
 import tkinter as tk
-from models import Interaction
 
 
 class InteractionManager:
@@ -66,6 +64,11 @@ class InteractionManager:
                 self.app.style_menu.configure(state='disabled')
             except Exception:
                 pass
+            # redraw to clear any selection highlight
+            try:
+                self.app.canvas_controller.redraw()
+            except Exception:
+                pass
             return
         idx = sel[0]
         inter = self.app.interactions[idx]
@@ -75,6 +78,11 @@ class InteractionManager:
                 self.app.style_menu.configure(state='normal')
             except Exception:
                 pass
+        except Exception:
+            pass
+        # redraw canvas so the selected interaction shows highlighted outline
+        try:
+            self.app.canvas_controller.redraw()
         except Exception:
             pass
 
@@ -137,5 +145,3 @@ class InteractionManager:
         del self.app.interactions[idx]
         self.update_interaction_listbox()
         self.app.canvas_controller.redraw()
-
-

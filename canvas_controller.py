@@ -123,6 +123,13 @@ class CanvasController:
             ly2 = CANVAS_HEIGHT - 20
             self.canvas.create_line(lx, ly1, lx, ly2, dash=(4,4), fill=self.app.palette.get('lifeline', '#888'))
 
+        # determine currently selected interaction index (if any) from listbox
+        try:
+            sel = self.app.interaction_listbox.curselection()
+            selected_idx = sel[0] if sel else None
+        except Exception:
+            selected_idx = None
+
         # draw interactions in order
         for i, inter in enumerate(self.app.interactions):
             src = self.get_actor_by_id(inter.source_id)
@@ -136,6 +143,17 @@ class CanvasController:
             dash = None
             if getattr(inter, 'style', 'solid') == 'dashed':
                 dash = (6, 4)
+
+            is_selected = (i == selected_idx)
+            # if selected, draw a thicker outline line behind the normal line
+            if is_selected:
+                outline_color = self.app.palette.get('accent', '#4a90e2')
+                try:
+                    # wider outline line (drawn first so main line sits on top)
+                    self.canvas.create_line(sx, y, tx, y, arrow=tk.LAST, width=6, dash=dash, fill=outline_color, tags=(f"interaction_{i}",))
+                except Exception:
+                    pass
+
             line_color = self.app.palette.get('label_fg')
             line = self.canvas.create_line(sx, y, tx, y, arrow=tk.LAST, width=2, dash=dash, fill=line_color, tags=(f"interaction_{i}",))
             # label and index
@@ -149,7 +167,4 @@ class CanvasController:
             except Exception:
                 pass
 
-        # update listbox (ensure selection remains valid)
-        self.app.interaction_manager.update_interaction_listbox()
-
-
+        # NOTE: removed the call to update_interaction_listbox() here to avoid a redraw -> listbox update -> redraw recursion
