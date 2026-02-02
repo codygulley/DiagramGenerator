@@ -8,6 +8,7 @@ from tkinter import ttk, font as tkfont
 from typing import List, Optional
 import prefs
 from theme import palette_for_theme
+from ui_utils import center_window
 
 from models import (
     Actor,
@@ -348,7 +349,7 @@ class DiagramApp:
         dlg.transient(self.root)
         dlg.grab_set()
         try:
-            dlg.configure(background=self.palette.get('app_bg', '#f5f7fa'))
+            center_window(dlg, self.root)
         except Exception:
             pass
 

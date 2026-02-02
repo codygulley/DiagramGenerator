@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 from typing import Optional
+from ui_utils import center_window
 
 class ThemedDialogs:
     """Helper for themed modal dialogs.
@@ -20,6 +21,11 @@ class ThemedDialogs:
         dlg.title(title)
         dlg.transient(parent)
         dlg.grab_set()
+        try:
+            center_window(dlg, parent)
+        except Exception:
+            pass
+
         try:
             dlg.configure(background=self.app.palette.get('app_bg'))
         except Exception:
@@ -76,6 +82,10 @@ class ThemedDialogs:
         dlg.title(title)
         dlg.transient(parent)
         dlg.grab_set()
+        try:
+            center_window(dlg, parent)
+        except Exception:
+            pass
         try:
             dlg.configure(background=self.app.palette.get('app_bg'))
         except Exception:
