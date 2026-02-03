@@ -80,6 +80,8 @@ class DiagramApp:
         self.creating_interaction = False
         self.interaction_start_actor: Optional[Actor] = None
         self.temp_line = None
+        # transient reference to the context menu to keep it alive while posted
+        self._context_menu = None
 
         # Layout
         # Left area (canvas) in a white 'card'
@@ -94,8 +96,8 @@ class DiagramApp:
         self.right_frame = ttk.Frame(root, width=300, style='TFrame')
         self.right_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(8,12), pady=12)
 
-        self.add_actor_btn = ttk.Button(self.right_frame, text="Add Actor", command=self.add_actor_dialog, style='Accent.TButton')
-        self.add_actor_btn.pack(padx=8, pady=8, anchor=tk.N, fill=tk.X)
+        # The Add Actor and Export buttons were removed in favor of the canvas context menu.
+        # (Use right-click/context menu on the canvas to add actors or export.)
 
         # Theme selector (System / Light / Dark)
         theme_frame = ttk.Frame(self.right_frame, style='TFrame')
@@ -156,16 +158,22 @@ class DiagramApp:
         except Exception:
             pass
 
-        # Export button (opens a modal with export options)
-        self.export_btn = ttk.Button(self.right_frame, text="Export", command=self.export_dialog, style='Accent.TButton')
-        self.export_btn.pack(padx=8, pady=8, fill=tk.X)
-
         # Create controllers/managers and bind canvas events to them
         self.canvas_controller = CanvasController(self)
         self.interaction_manager = InteractionManager(self)
         self.canvas.bind("<ButtonPress-1>", self.canvas_controller.on_canvas_press)
         self.canvas.bind("<B1-Motion>", self.canvas_controller.on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self.canvas_controller.on_canvas_release)
+        # show context menu on right-click and also on Control+Click (common on macOS)
+        try:
+            # Bind a few variants so right-click / ctrl+click work across platforms.
+            # Keep bindings local to the canvas to avoid duplicate postings from
+            # root-level/global handlers which can hide the menu on some systems.
+            self.canvas.bind("<Button-3>", lambda e: self.show_canvas_context_menu(e))
+            self.canvas.bind("<Button-2>", lambda e: self.show_canvas_context_menu(e))
+            self.canvas.bind("<Control-Button-1>", lambda e: self.show_canvas_context_menu(e))
+        except Exception:
+            pass
 
         # bind selection change to update style dropdown
         self.interaction_listbox.bind('<<ListboxSelect>>', self.interaction_manager.on_interaction_select)
@@ -371,8 +379,11 @@ class DiagramApp:
                 dlg.destroy()
             except Exception:
                 pass
+            # If an Export button exists in the UI it would be disabled while exporting;
+            # but the button was removed in favor of the context menu. Guard the reference.
             try:
-                self.export_btn.config(state='disabled')
+                if hasattr(self, 'export_btn'):
+                    self.export_btn.config(state='disabled')
             except Exception:
                 pass
             try:
@@ -383,7 +394,8 @@ class DiagramApp:
                     self.dialogs.error("Export error", str(e))
             finally:
                 try:
-                    self.export_btn.config(state='normal')
+                    if hasattr(self, 'export_btn'):
+                        self.export_btn.config(state='normal')
                 except Exception:
                     pass
 
@@ -392,6 +404,47 @@ class DiagramApp:
 
         on_fmt_change()
         dlg.wait_window()
+
+    def show_canvas_context_menu(self, event):
+        """Show a right-click context menu on the canvas with common actions.
+
+        The menu provides 'Add Actor' and 'Export...' entries. We post the menu at
+        the pointer location so it feels native.
+        """
+        # Create a menu and keep a transient reference so it's not GC'd while shown.
+        menu = None
+        try:
+            menu = tk.Menu(self.root, tearoff=0)
+            menu.add_command(label='Add Actor', command=lambda: self.add_actor_dialog())
+            menu.add_separator()
+            menu.add_command(label='Export...', command=lambda: self.export_dialog())
+            self._context_menu = menu
+            # Determine screen coords for the popup. Some event objects (from root.bind_all)
+            # may not provide x_root/y_root reliably, so fall back to the current pointer.
+            try:
+                x_root = int(event.x_root)
+                y_root = int(event.y_root)
+            except Exception:
+                x_root = int(self.root.winfo_pointerx())
+                y_root = int(self.root.winfo_pointery())
+            # Use tk_popup for cross-platform behavior and then release the grab.
+            menu.tk_popup(x_root, y_root)
+        except Exception:
+            try:
+                if menu:
+                    menu.unpost()
+            except Exception:
+                pass
+        finally:
+            try:
+                if menu is not None:
+                    menu.grab_release()
+            except Exception:
+                pass
+            try:
+                self._context_menu = None
+            except Exception:
+                pass
 
     # ----------------- Canvas events -----------------
     def on_canvas_press(self, event):

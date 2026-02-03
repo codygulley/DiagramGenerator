@@ -53,15 +53,36 @@ class CanvasController:
         except Exception:
             pass
 
+        # Detect if Shift is held (modifier bit 0x0001) — use Shift to move actors
+        shift_held = False
+        try:
+            shift_held = bool(event.state & 0x0001)
+        except Exception:
+            shift_held = False
+
         if actor:
-            # don't immediately start dragging the actor; record as a potential press
-            self.pressed_actor = actor
-            self.press_x = x
-            self.press_y = y
-            # clear any previous actor selection highlight — we'll set it on release if still a click
-            # but keep the value so redraw can show it if needed
-            # prevent accidental actor-moves by not setting app.dragging_actor here
-            self.app.dragging_actor = None
+            if shift_held:
+                # Start actor dragging immediately when Shift is held
+                try:
+                    self.app.dragging_actor = actor
+                    self.app.drag_offset_x = actor.x - x
+                except Exception:
+                    self.app.dragging_actor = None
+                # clear transient press/interaction state
+                self.pressed_actor = None
+                self.press_x = None
+                self.press_y = None
+                self.dragging_interaction = False
+            else:
+                # don't immediately start dragging the actor; record as a potential press for click vs interaction
+                self.pressed_actor = actor
+                self.press_x = x
+                self.press_y = y
+                # ensure actor-drag isn't active
+                try:
+                    self.app.dragging_actor = None
+                except Exception:
+                    pass
         else:
             # click on blank area - deselect actor and interaction
             self.pressed_actor = None
@@ -79,6 +100,18 @@ class CanvasController:
 
     def on_canvas_drag(self, event):
         x, y = event.x, event.y
+        # If an actor-drag was initiated via Shift, move the actor
+        try:
+            if getattr(self.app, 'dragging_actor', None):
+                new_x = x + getattr(self.app, 'drag_offset_x', 0)
+                # clamp into canvas width
+                new_x = max(ACTOR_WIDTH//2 + 10, min(self.canvas.winfo_width() - ACTOR_WIDTH//2 - 10, new_x))
+                self.app.dragging_actor.x = new_x
+                self.redraw()
+                return
+        except Exception:
+            pass
+
         # If we previously pressed on an actor and moved more than threshold, start interaction drag
         if self.pressed_actor and not self.dragging_interaction:
             dx = x - (self.press_x or 0)
@@ -120,6 +153,19 @@ class CanvasController:
 
     def on_canvas_release(self, event):
         x, y = event.x, event.y
+        # If we were dragging an actor (Shift-drag), stop moving
+        try:
+            if getattr(self.app, 'dragging_actor', None):
+                self.app.dragging_actor = None
+                self.app.drag_offset_x = 0
+                # reset transient press state
+                self.pressed_actor = None
+                self.press_x = None
+                self.press_y = None
+                return
+        except Exception:
+            pass
+
         # If we were dragging to create an interaction (started from a press)
         if self.dragging_interaction or (self.app.creating_interaction and self.app.interaction_start_actor):
             # determine which actor (if any) we released over
