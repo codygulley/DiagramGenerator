@@ -99,23 +99,31 @@ class DiagramApp:
         # The Add Actor and Export buttons were removed in favor of the canvas context menu.
         # (Use right-click/context menu on the canvas to add actors or export.)
 
-        # Theme selector (System / Light / Dark)
-        theme_frame = ttk.Frame(self.right_frame, style='TFrame')
-        theme_frame.pack(padx=8, pady=(0,6), fill=tk.X)
-        ttk.Label(theme_frame, text='Theme:', style='TLabel').pack(side=tk.LEFT)
-        # Use a tk.OptionMenu so we can style the dropdown reliably across themes
-        self.theme_var = tk.StringVar()
-        disp = {'system':'System','light':'Light','dark':'Dark'}.get(self.user_theme_pref, 'System')
-        self.theme_var.set(disp)
-        self.theme_menu = tk.OptionMenu(theme_frame, self.theme_var, 'System', 'Light', 'Dark', command=self.on_theme_combo_change)
-        self.theme_menu.config(borderwidth=0, highlightthickness=0)
-        self.theme_menu.pack(side=tk.LEFT, padx=6)
+        # Application menu (menubar) with Theme submenu
+        # Use a menubar radiobutton menu for theme selection instead of an in-pane OptionMenu.
         try:
-            # also watch for programmatic changes to the variable
-            self.theme_var.trace_add('write', lambda *_: self.on_theme_combo_change())
+            self.theme_var = tk.StringVar()
+            disp = {'system':'System','light':'Light','dark':'Dark'}.get(self.user_theme_pref, 'System')
+            self.theme_var.set(disp)
+
+            self.menubar = tk.Menu(self.root)
+            self.root.config(menu=self.menubar)
+
+            # Preferences / Theme menu
+            self._prefs_menu = tk.Menu(self.menubar, tearoff=0)
+            self.menubar.add_cascade(label='Preferences', menu=self._prefs_menu)
+            # Theme submenu with radiobutton items bound to theme_var
+            self._theme_menu = tk.Menu(self._prefs_menu, tearoff=0)
+            self._prefs_menu.add_cascade(label='Theme', menu=self._theme_menu)
+            # Radiobuttons update theme_var; invoke on change to apply
+            self._theme_menu.add_radiobutton(label='System', variable=self.theme_var, value='System', command=self.on_theme_combo_change)
+            self._theme_menu.add_radiobutton(label='Light', variable=self.theme_var, value='Light', command=self.on_theme_combo_change)
+            self._theme_menu.add_radiobutton(label='Dark', variable=self.theme_var, value='Dark', command=self.on_theme_combo_change)
         except Exception:
+            # Fall back silently if menu creation fails on a platform
             try:
-                self.theme_var.trace('w', lambda *_: self.on_theme_combo_change())
+                self.theme_var = tk.StringVar()
+                self.theme_var.set('System')
             except Exception:
                 pass
 
@@ -273,8 +281,13 @@ class DiagramApp:
         except Exception:
             pass
         try:
-            self.theme_menu.configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['card_bg'], highlightthickness=0)
-            self.theme_menu['menu'].configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['accent'])
+            # If an in-UI theme OptionMenu exists (older UI), style it; otherwise ignore.
+            if hasattr(self, 'theme_menu') and self.theme_menu is not None:
+                try:
+                    self.theme_menu.configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['card_bg'], highlightthickness=0)
+                    self.theme_menu['menu'].configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['accent'])
+                except Exception:
+                    pass
         except Exception:
             pass
         # canvas background
