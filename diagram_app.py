@@ -9,6 +9,7 @@ from typing import List, Optional
 import prefs
 import json
 from pathlib import Path
+import sys
 from theme import palette_for_theme
 from ui_utils import center_window
 
@@ -31,6 +32,231 @@ from export_utils import export_canvas
 from canvas_controller import CanvasController
 from interaction_manager import InteractionManager
 
+class Document:
+    """Represents a single diagram document (model + UI widgets + controllers).
+
+    The Document is intentionally lightweight: it mirrors the attributes the
+    existing CanvasController and InteractionManager expect (so we can reuse
+    those classes unchanged) and owns its canvas and listbox widgets.
+    """
+    def __init__(self, app, title: str = 'Untitled'):
+        self.app = app  # reference back to DiagramApp for dialogs, palette, root
+        self.title = title
+
+        # Model
+        self.actors = []
+        self.interactions = []
+        self.next_actor_id = 1
+        self.current_file = None
+
+        # Transient UI state (these mirror attributes expected by controllers)
+        self.temp_line = None
+        self.interaction_start_actor = None
+        self.creating_interaction = False
+        self.selected_actor_id = None
+        self.dragging_actor = None
+        self.drag_offset_x = 0
+
+        # App-level helpers (copied from DiagramApp for controllers to use)
+        try:
+            self.palette = getattr(app, 'palette', {})
+        except Exception:
+            self.palette = {}
+        self.dialogs = getattr(app, 'dialogs', None)
+        self.root = getattr(app, 'root', None)
+
+        # Widget refs (populated by create_ui)
+        self.frame = None
+        self.canvas = None
+        self.interaction_listbox = None
+        self.style_menu = None
+        self.style_var = tk.StringVar(value='solid')
+        self.new_interaction_style = tk.StringVar(value='solid')
+
+        # Controllers (set after widgets created)
+        self.canvas_controller = None
+        self.interaction_manager = None
+
+    def create_ui(self, parent):
+        """Create UI for this document inside `parent` (a ttk.Frame used as tab).
+        The layout mirrors the old single-document UI so the controllers behave
+        identically.
+        """
+        self.frame = ttk.Frame(parent)
+        # Left: canvas card
+        left = ttk.Frame(self.frame)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(12,8), pady=12)
+        canvas_card = ttk.Frame(left, style='Card.TFrame')
+        canvas_card.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        self.canvas = tk.Canvas(canvas_card, width=CANVAS_WIDTH, height=CANVAS_HEIGHT, bg=self.palette.get('canvas_bg', 'white'), highlightthickness=0)
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+
+        # Right: controls and listbox
+        right = ttk.Frame(self.frame, width=300, style='TFrame')
+        right.pack(side=tk.RIGHT, fill=tk.Y, padx=(8,12), pady=12)
+
+        controls_card = ttk.Frame(right, style='Card.TFrame')
+        controls_card.pack(padx=8, pady=(4,8), fill=tk.X)
+        style_frame = ttk.Frame(controls_card, style='Card.TFrame')
+        style_frame.pack(padx=8, pady=(0,8), anchor=tk.NW, fill=tk.X)
+        tk.Label(style_frame, text='New Interaction Style:', bg=self.palette.get('card_bg'), fg=self.palette.get('text_fg'), font=self.app.small_font).pack(side=tk.LEFT)
+        self._new_interaction_style_menu = tk.OptionMenu(style_frame, self.new_interaction_style, 'solid', 'dashed')
+        self._new_interaction_style_menu.config(borderwidth=0, highlightthickness=0)
+        self._new_interaction_style_menu.pack(side=tk.LEFT, padx=4)
+
+        ttk.Label(right, text='Interactions:', style='Header.TLabel').pack(padx=8, pady=(12,0), anchor=tk.NW)
+        list_card = ttk.Frame(right, style='Card.TFrame')
+        list_card.pack(padx=8, pady=8, fill=tk.BOTH, expand=False)
+        self.interaction_listbox = tk.Listbox(list_card, width=40, height=12, bd=0, highlightthickness=0, activestyle='none', bg=self.palette.get('card_bg'), fg=self.palette.get('text_fg'), selectbackground=self.palette.get('accent'), selectforeground='white')
+        self.interaction_listbox.pack(padx=6, pady=6)
+
+        btn_frame = ttk.Frame(list_card, style='Card.TFrame')
+        btn_frame.pack(padx=8, pady=(6,8), fill=tk.X)
+        self.up_btn = ttk.Button(btn_frame, text='Up', command=lambda: self.interaction_manager.move_interaction_up(), style='Accent.TButton')
+        self.up_btn.grid(row=0, column=0, padx=4)
+        self.down_btn = ttk.Button(btn_frame, text='Down', command=lambda: self.interaction_manager.move_interaction_down(), style='Accent.TButton')
+        self.down_btn.grid(row=0, column=1, padx=4)
+        self.edit_btn = ttk.Button(btn_frame, text='Edit', command=lambda: self.interaction_manager.edit_interaction_label(), style='Accent.TButton')
+        self.edit_btn.grid(row=0, column=2, padx=4)
+        self.delete_btn = ttk.Button(btn_frame, text='Delete', command=lambda: self.interaction_manager.delete_interaction(), style='Accent.TButton')
+        self.delete_btn.grid(row=0, column=3, padx=4)
+
+        self.style_menu = tk.OptionMenu(btn_frame, self.style_var, 'solid', 'dashed', command=lambda _=None: self.interaction_manager.on_style_change())
+        self.style_menu.grid(row=0, column=4, padx=8)
+        try:
+            self.style_menu.configure(state='disabled')
+        except Exception:
+            pass
+        try:
+            self.up_btn.configure(state='disabled')
+            self.down_btn.configure(state='disabled')
+            self.edit_btn.configure(state='disabled')
+            self.delete_btn.configure(state='disabled')
+        except Exception:
+            pass
+
+        # Create controllers bound to this document
+        self.canvas_controller = CanvasController(self)
+        self.interaction_manager = InteractionManager(self)
+
+        # Bind canvas events to the controller
+        self.canvas.bind('<ButtonPress-1>', self.canvas_controller.on_canvas_press)
+        self.canvas.bind('<B1-Motion>', self.canvas_controller.on_canvas_drag)
+        self.canvas.bind('<ButtonRelease-1>', self.canvas_controller.on_canvas_release)
+        try:
+            self.canvas.bind('<Button-3>', lambda e: self.app.show_canvas_context_menu(e, doc=self))
+            self.canvas.bind('<Button-2>', lambda e: self.app.show_canvas_context_menu(e, doc=self))
+            self.canvas.bind('<Control-Button-1>', lambda e: self.app.show_canvas_context_menu(e, doc=self))
+        except Exception:
+            pass
+
+        # Listbox selection handling
+        self.interaction_listbox.bind('<<ListboxSelect>>', self.interaction_manager.on_interaction_select)
+
+        return self.frame
+
+    # Model actions
+    def add_actor_dialog(self):
+        name = self.app.dialogs.ask_string('Actor name', 'Enter actor name:')
+        if not name:
+            return
+        x = 100 + (len(self.actors) * (ACTOR_WIDTH + 40))
+        actor = Actor(id=self.next_actor_id, name=name, x=x)
+        self.next_actor_id += 1
+        self.actors.append(actor)
+        try:
+            self.canvas_controller.redraw()
+        except Exception:
+            pass
+
+    def add_interaction(self, source: Actor, target: Actor, label: str = ''):
+        if source.id == target.id:
+            self.app.dialogs.info('Invalid', 'Cannot create interaction to the same actor')
+            return
+        style_val = self.new_interaction_style.get() if isinstance(self.new_interaction_style, tk.StringVar) else 'solid'
+        self.interactions.append(Interaction(source_id=source.id, target_id=target.id, label=label, style=style_val))
+        try:
+            self.interaction_manager.update_interaction_listbox()
+            self.canvas_controller.redraw()
+        except Exception:
+            pass
+
+    def save_diagram(self, path: str):
+        data = {'actors': [{'id': a.id, 'name': a.name, 'x': a.x, 'y': a.y} for a in self.actors],
+                'interactions': [{'source_id': i.source_id, 'target_id': i.target_id, 'label': i.label, 'style': getattr(i, 'style', 'solid')} for i in self.interactions],
+                'next_actor_id': self.next_actor_id}
+        with open(path, 'w', encoding='utf-8') as fh:
+            json.dump(data, fh, indent=2)
+        self.current_file = Path(path)
+        return path
+
+    def load_diagram(self, path: str):
+        with open(path, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+        actors = []
+        interactions = []
+        for a in data.get('actors', []):
+            actors.append(Actor(id=int(a['id']), name=str(a.get('name', '')), x=int(a.get('x', 100)), y=int(a.get('y', 20))))
+        for it in data.get('interactions', []):
+            interactions.append(Interaction(source_id=int(it['source_id']), target_id=int(it['target_id']), label=str(it.get('label', '')), style=str(it.get('style', 'solid'))))
+        self.actors = actors
+        self.interactions = interactions
+        self.next_actor_id = int(data.get('next_actor_id', (max((a.id for a in actors), default=0) + 1)))
+        try:
+            self.interaction_manager.update_interaction_listbox()
+            self.canvas_controller.redraw()
+        except Exception:
+            pass
+
+    def apply_palette(self, palette: dict):
+        """Update this document's widgets to use the provided palette."""
+        try:
+            self.palette = palette
+        except Exception:
+            pass
+        try:
+            if getattr(self, '_new_interaction_style_menu', None):
+                try:
+                    self._new_interaction_style_menu.configure(bg=palette.get('card_bg'), fg=palette.get('text_fg'), activebackground=palette.get('card_bg'), highlightthickness=0)
+                    self._new_interaction_style_menu['menu'].configure(bg=palette.get('card_bg'), fg=palette.get('text_fg'), activebackground=palette.get('accent'))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            if getattr(self, 'style_menu', None):
+                try:
+                    self.style_menu.configure(bg=palette.get('card_bg'), fg=palette.get('text_fg'), activebackground=palette.get('card_bg'), highlightthickness=0)
+                    self.style_menu['menu'].configure(bg=palette.get('card_bg'), fg=palette.get('text_fg'), activebackground=palette.get('accent'))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            if getattr(self, 'canvas', None):
+                self.canvas.configure(bg=palette.get('canvas_bg'))
+        except Exception:
+            pass
+
+    # Helpers expected by controllers/manager (mirror prior DiagramApp API)
+    def find_actor_at(self, x, y):
+        if getattr(self, 'canvas_controller', None):
+            return self.canvas_controller.find_actor_at(x, y)
+        return None
+
+    def get_actor_by_id(self, id_):
+        if getattr(self, 'canvas_controller', None):
+            return self.canvas_controller.get_actor_by_id(id_)
+        # fallback: scan actors list
+        for a in self.actors:
+            if a.id == id_:
+                return a
+        return None
+
+    def redraw(self):
+        if getattr(self, 'canvas_controller', None):
+            return self.canvas_controller.redraw()
+        return None
 
 class DiagramApp:
     def __init__(self, root: tk.Tk):
@@ -70,33 +296,20 @@ class DiagramApp:
             except Exception:
                 self.dialogs = None
 
-        self.actors: List[Actor] = []
-        self.interactions: List[Interaction] = []
-        self.next_actor_id = 1
-        # currently-selected actor id (used by CanvasController for click selection/highlight)
-        self.selected_actor_id = None
-
-        self.dragging_actor: Optional[Actor] = None
-        self.drag_offset_x = 0
-
-        self.creating_interaction = False
-        self.interaction_start_actor: Optional[Actor] = None
-        self.temp_line = None
-        # transient reference to the context menu to keep it alive while posted
-        self._context_menu = None
+        # Document management
+        self.documents: List[Document] = []
+        self.active_document: Optional[Document] = None
 
         # Layout
-        # Left area (canvas) in a white 'card'
-        self.left_frame = ttk.Frame(root, style='TFrame')
-        self.left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(12,8), pady=12)
+        # Notebook for document tabs
+        self.notebook = ttk.Notebook(root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=12, pady=(12, 8))
 
-        canvas_card = ttk.Frame(self.left_frame, style='Card.TFrame')
-        canvas_card.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        self.canvas = tk.Canvas(canvas_card, width=CANVAS_WIDTH, height=CANVAS_HEIGHT, bg=self.palette.get('canvas_bg', 'white'), highlightthickness=0)
-        self.canvas.pack(fill=tk.BOTH, expand=True)
-
-        self.right_frame = ttk.Frame(root, width=300, style='TFrame')
-        self.right_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(8,12), pady=12)
+        # Track tab changes to update active document
+        try:
+            self.notebook.bind('<<NotebookTabChanged>>', lambda e: self._on_tab_changed(e))
+        except Exception:
+            pass
 
         # The Add Actor and Export buttons were removed in favor of the canvas context menu.
         # (Use right-click/context menu on the canvas to add actors or export.)
@@ -114,15 +327,18 @@ class DiagramApp:
             # File menu: New / Open / Save / Save As / Export
             self._file_menu = tk.Menu(self.menubar, tearoff=0)
             self.menubar.add_cascade(label='File', menu=self._file_menu)
-            self._file_menu.add_command(label='New', command=lambda: self.new_diagram())
-            self._file_menu.add_command(label='Open...', command=lambda: self.load_diagram_dialog())
-            self._file_menu.add_command(label='Save', command=lambda: self.save())
-            self._file_menu.add_command(label='Save As...', command=lambda: self.save_diagram_dialog())
+            # platform-aware accelerator labels
+            accel_save = 'Cmd+S' if sys.platform == 'darwin' else 'Ctrl+S'
+            accel_open = 'Cmd+O' if sys.platform == 'darwin' else 'Ctrl+O'
+            accel_new = 'Cmd+N' if sys.platform == 'darwin' else 'Ctrl+N'
+            accel_saveas = 'Cmd+Shift+S' if sys.platform == 'darwin' else 'Ctrl+Shift+S'
+
+            self._file_menu.add_command(label=f'New\t{accel_new}', command=lambda: self.new_diagram(), accelerator=accel_new)
+            self._file_menu.add_command(label=f'Open...\t{accel_open}', command=lambda: self.load_diagram_dialog(), accelerator=accel_open)
+            self._file_menu.add_command(label=f'Save\t{accel_save}', command=lambda: self.save(), accelerator=accel_save)
+            self._file_menu.add_command(label=f'Save As...\t{accel_saveas}', command=lambda: self.save_diagram_dialog(), accelerator=accel_saveas)
             self._file_menu.add_separator()
             self._file_menu.add_command(label='Export...', command=lambda: self.export_dialog())
-
-            # track current filename for Save/Save As
-            self.current_file: Optional[Path] = None
 
             # Preferences / Theme menu
             self._prefs_menu = tk.Menu(self.menubar, tearoff=0)
@@ -134,6 +350,21 @@ class DiagramApp:
             self._theme_menu.add_radiobutton(label='System', variable=self.theme_var, value='System', command=self.on_theme_combo_change)
             self._theme_menu.add_radiobutton(label='Light', variable=self.theme_var, value='Light', command=self.on_theme_combo_change)
             self._theme_menu.add_radiobutton(label='Dark', variable=self.theme_var, value='Dark', command=self.on_theme_combo_change)
+            # Global key bindings for accelerators (bind both Control and Command on macOS)
+            try:
+                # Use root.bind_all so accelerators work regardless of focus inside the app
+                self.root.bind_all('<Control-s>', lambda e: (self.save() or True) and 'break')
+                self.root.bind_all('<Control-o>', lambda e: (self.load_diagram_dialog() or True) and 'break')
+                self.root.bind_all('<Control-n>', lambda e: (self.new_diagram() or True) and 'break')
+                self.root.bind_all('<Control-Shift-S>', lambda e: (self.save_diagram_dialog() or True) and 'break')
+                if sys.platform == 'darwin':
+                    # Command key on macOS
+                    self.root.bind_all('<Command-s>', lambda e: (self.save() or True) and 'break')
+                    self.root.bind_all('<Command-o>', lambda e: (self.load_diagram_dialog() or True) and 'break')
+                    self.root.bind_all('<Command-n>', lambda e: (self.new_diagram() or True) and 'break')
+                    self.root.bind_all('<Command-Shift-S>', lambda e: (self.save_diagram_dialog() or True) and 'break')
+            except Exception:
+                pass
         except Exception:
             # Fall back silently if menu creation fails on a platform
             try:
@@ -142,124 +373,68 @@ class DiagramApp:
             except Exception:
                 pass
 
-        # Controls card: keep interaction controls on a white card so labels sit on white
-        controls_card = ttk.Frame(self.right_frame, style='Card.TFrame')
-        controls_card.pack(padx=8, pady=(4,8), fill=tk.X)
-
-        # Style selector for new interactions (placed on controls_card so background is white)
-        self.new_interaction_style = tk.StringVar(value="solid")
-        style_frame = ttk.Frame(controls_card, style='Card.TFrame')
-        style_frame.pack(padx=8, pady=(0,8), anchor=tk.NW, fill=tk.X)
-        # Use a dropdown (OptionMenu) for new interaction style (defaults to 'solid')
-        tk.Label(style_frame, text="New Interaction Style:", bg=self.palette.get('card_bg'), fg=self.palette.get('text_fg'), font=self.small_font).pack(side=tk.LEFT)
-        self._new_interaction_style_menu = tk.OptionMenu(style_frame, self.new_interaction_style, 'solid', 'dashed', command=lambda *_: None)
-        self._new_interaction_style_menu.config(borderwidth=0, highlightthickness=0)
-        self._new_interaction_style_menu.pack(side=tk.LEFT, padx=4)
-
-        ttk.Label(self.right_frame, text="Interactions:", style='Header.TLabel').pack(padx=8, pady=(12,0), anchor=tk.NW)
-        # Keep a simple Listbox but place it inside a styled frame
-        list_card = ttk.Frame(self.right_frame, style='Card.TFrame')
-        list_card.pack(padx=8, pady=8, fill=tk.BOTH, expand=False)
-        self.interaction_listbox = tk.Listbox(list_card, width=40, height=12, bd=0, highlightthickness=0, activestyle='none', bg=self.palette.get('card_bg'), fg=self.palette.get('text_fg'), selectbackground=self.palette.get('accent'), selectforeground='white')
-        self.interaction_listbox.pack(padx=6, pady=6)
-
-        # Place action buttons and style combobox inside the list_card so they sit on the white card
-        btn_frame = ttk.Frame(list_card, style='Card.TFrame')
-        btn_frame.pack(padx=8, pady=(6,8), fill=tk.X)
-        # Action buttons for interactions — keep references so they can be enabled/disabled
-        self.up_btn = ttk.Button(btn_frame, text="Up", command=self.move_interaction_up, style='Accent.TButton')
-        self.up_btn.grid(row=0, column=0, padx=4)
-        self.down_btn = ttk.Button(btn_frame, text="Down", command=self.move_interaction_down, style='Accent.TButton')
-        self.down_btn.grid(row=0, column=1, padx=4)
-        self.edit_btn = ttk.Button(btn_frame, text="Edit", command=self.edit_interaction_label, style='Accent.TButton')
-        self.edit_btn.grid(row=0, column=2, padx=4)
-        self.delete_btn = ttk.Button(btn_frame, text="Delete", command=self.delete_interaction, style='Accent.TButton')
-        self.delete_btn.grid(row=0, column=3, padx=4)
-        # Style combobox for the selected interaction (styled to match card)
-        self.style_var = tk.StringVar(value="solid")
-        # Replace the ttk Combobox with a tk.OptionMenu to ensure consistent styling in dark theme
-        self.style_menu = tk.OptionMenu(btn_frame, self.style_var, 'solid', 'dashed', command=lambda v: self.on_style_change())
-        self.style_menu.grid(row=0, column=4, padx=8)
-        # disable until an interaction is selected
+        # Create an initial empty document (adds a tab). Per-document UI is
+        # created by `Document.create_ui` and controllers are bound to each
+        # document; this app-level UI block was removed when we added tabs.
         try:
-            self.style_menu.configure(state='disabled')
+            self.new_diagram()
         except Exception:
             pass
-        # disable action buttons until an interaction is selected
-        try:
-            self.up_btn.configure(state='disabled')
-            self.down_btn.configure(state='disabled')
-            self.edit_btn.configure(state='disabled')
-            self.delete_btn.configure(state='disabled')
-        except Exception:
-            pass
-
-        # Create controllers/managers and bind canvas events to them
-        self.canvas_controller = CanvasController(self)
-        self.interaction_manager = InteractionManager(self)
-        self.canvas.bind("<ButtonPress-1>", self.canvas_controller.on_canvas_press)
-        self.canvas.bind("<B1-Motion>", self.canvas_controller.on_canvas_drag)
-        self.canvas.bind("<ButtonRelease-1>", self.canvas_controller.on_canvas_release)
-        # show context menu on right-click and also on Control+Click (common on macOS)
-        try:
-            # Bind a few variants so right-click / ctrl+click work across platforms.
-            # Keep bindings local to the canvas to avoid duplicate postings from
-            # root-level/global handlers which can hide the menu on some systems.
-            self.canvas.bind("<Button-3>", lambda e: self.show_canvas_context_menu(e))
-            self.canvas.bind("<Button-2>", lambda e: self.show_canvas_context_menu(e))
-            self.canvas.bind("<Control-Button-1>", lambda e: self.show_canvas_context_menu(e))
-        except Exception:
-            pass
-
-        # bind selection change to update style dropdown
-        self.interaction_listbox.bind('<<ListboxSelect>>', self.interaction_manager.on_interaction_select)
-
-        self.redraw()
 
     # ----------------- Actor management -----------------
     def add_actor_dialog(self):
-        name = self.dialogs.ask_string("Actor name", "Enter actor name:")
-        if not name:
-            return
-        x = 100 + (len(self.actors) * (ACTOR_WIDTH + 40))
-        actor = Actor(id=self.next_actor_id, name=name, x=x)
-        self.next_actor_id += 1
-        self.actors.append(actor)
-        self.redraw()
+        """Add an actor to the active document (or prompt harmlessly if none)."""
+        doc = self.get_active_document()
+        if doc:
+            return doc.add_actor_dialog()
+        # fallback: show dialog but no document to add to
+        try:
+            self.dialogs.ask_string("Actor name", "No document open to add actor to.")
+        except Exception:
+            pass
 
     # ----------------- Persistence (save/load) -----------------
     def new_diagram(self):
-        self.actors = []
-        self.interactions = []
-        self.next_actor_id = 1
-        self.current_file = None
-        try:
-            self.interaction_manager.update_interaction_listbox()
-        except Exception:
-            pass
-        self.redraw()
+        # Create a new tab/document and select it
+        doc = Document(self, title='Untitled')
+        frame = doc.create_ui(self.notebook)
+        self.documents.append(doc)
+        self.notebook.add(frame, text=doc.title)
+        self.notebook.select(frame)
+        self.active_document = doc
 
     def save(self):
-        """Save current diagram to `self.current_file` or prompt for path if not set."""
-        if self.current_file:
+        doc = getattr(self, 'active_document', None)
+        if not doc:
+            return False
+        if doc.current_file:
             try:
-                self.save_diagram(str(self.current_file))
+                doc.save_diagram(str(doc.current_file))
                 return True
             except Exception as e:
                 try:
-                    self.dialogs.error("Save error", str(e))
+                    self.dialogs.error('Save error', str(e))
                 except Exception:
                     pass
                 return False
         return self.save_diagram_dialog()
 
     def save_diagram_dialog(self):
+        doc = getattr(self, 'active_document', None)
+        if not doc:
+            return False
         f = filedialog.asksaveasfilename(parent=self.root, defaultextension='.json', filetypes=[('Diagram JSON', '*.json')])
         if not f:
             return False
         try:
-            self.save_diagram(f)
-            self.current_file = Path(f)
+            doc.save_diagram(f)
+            doc.current_file = Path(f)
+            # update tab title
+            try:
+                idx = self.notebook.index(doc.frame)
+                self.notebook.tab(idx, text=Path(f).name)
+            except Exception:
+                pass
             return True
         except Exception as e:
             try:
@@ -269,23 +444,26 @@ class DiagramApp:
             return False
 
     def save_diagram(self, path: str):
-        """Serialize current actors/interactions to JSON at path."""
-        data = {
-            'actors': [{'id': a.id, 'name': a.name, 'x': a.x, 'y': a.y} for a in self.actors],
-            'interactions': [{'source_id': i.source_id, 'target_id': i.target_id, 'label': i.label, 'style': getattr(i, 'style', 'solid')} for i in self.interactions],
-            'next_actor_id': self.next_actor_id,
-        }
-        with open(path, 'w', encoding='utf-8') as fh:
-            json.dump(data, fh, indent=2)
-        return path
+        # Deprecated: keep for compatibility, but prefer document save.
+        doc = getattr(self, 'active_document', None)
+        if doc:
+            return doc.save_diagram(path)
+        raise RuntimeError('No active document')
 
     def load_diagram_dialog(self):
         f = filedialog.askopenfilename(parent=self.root, defaultextension='.json', filetypes=[('Diagram JSON', '*.json')])
         if not f:
             return False
         try:
-            self.load_diagram(f)
-            self.current_file = Path(f)
+            # Create a new document and load into it
+            doc = Document(self, title=Path(f).name)
+            frame = doc.create_ui(self.notebook)
+            self.documents.append(doc)
+            self.notebook.add(frame, text=doc.title)
+            self.notebook.select(frame)
+            self.active_document = doc
+            doc.load_diagram(f)
+            doc.current_file = Path(f)
             return True
         except Exception as e:
             try:
@@ -295,78 +473,75 @@ class DiagramApp:
             return False
 
     def load_diagram(self, path: str):
-        """Load diagram JSON from path and populate actors/interactions."""
-        with open(path, 'r', encoding='utf-8') as fh:
-            data = json.load(fh)
-
-        actors = []
-        interactions = []
-        # Validate actors
-        for a in data.get('actors', []):
-            try:
-                actors.append(Actor(id=int(a['id']), name=str(a.get('name', '')), x=int(a.get('x', 100)), y=int(a.get('y', 20))))
-            except Exception:
-                raise RuntimeError('Invalid actor data in file')
-
-        for it in data.get('interactions', []):
-            try:
-                interactions.append(Interaction(source_id=int(it['source_id']), target_id=int(it['target_id']), label=str(it.get('label', '')), style=str(it.get('style', 'solid'))))
-            except Exception:
-                raise RuntimeError('Invalid interaction data in file')
-
-        self.actors = actors
-        self.interactions = interactions
-        self.next_actor_id = int(data.get('next_actor_id', (max((a.id for a in actors), default=0) + 1)))
-        try:
-            self.interaction_manager.update_interaction_listbox()
-        except Exception:
-            pass
-        self.redraw()
+        # Deprecated: prefer load via load_diagram_dialog which creates a new document
+        doc = getattr(self, 'active_document', None)
+        if not doc:
+            raise RuntimeError('No active document to load into')
+        return doc.load_diagram(path)
 
     # ----------------- Interaction management -----------------
     def add_interaction(self, source: Actor, target: Actor, label: str = ""):
-        if source.id == target.id:
-            self.dialogs.info("Invalid", "Cannot create interaction to the same actor")
-            return
-        # use selected new-interaction style by default
-        style = getattr(self, 'new_interaction_style', None)
-        if style and isinstance(style, tk.StringVar):
-            style_val = style.get()
-        else:
-            style_val = 'solid'
-
-        self.interactions.append(Interaction(source_id=source.id, target_id=target.id, label=label, style=style_val))
-        self.interaction_manager.update_interaction_listbox()
-        self.canvas_controller.redraw()
+        doc = self.get_active_document()
+        if doc:
+            return doc.add_interaction(source, target, label=label)
+        try:
+            self.dialogs.info("Invalid", "No open document to add interaction to")
+        except Exception:
+            pass
 
     def update_interaction_listbox(self):
-        return self.interaction_manager.update_interaction_listbox()
+        doc = self.get_active_document()
+        if doc and doc.interaction_manager:
+            return doc.interaction_manager.update_interaction_listbox()
+        return None
 
     def select_interaction(self, idx: int):
-        """Select an interaction in the listbox by index and update UI."""
-        return self.interaction_manager.select_interaction(idx)
+        doc = self.get_active_document()
+        if doc and doc.interaction_manager:
+            return doc.interaction_manager.select_interaction(idx)
+        return None
 
     def edit_interaction_label_at(self, idx: int):
-        """Edit label for interaction at index idx (invoked from canvas)."""
-        return self.interaction_manager.edit_interaction_label_at(idx)
+        doc = self.get_active_document()
+        if doc and doc.interaction_manager:
+            return doc.interaction_manager.edit_interaction_label_at(idx)
+        return None
 
     def on_interaction_select(self, event=None):
-        return self.interaction_manager.on_interaction_select(event)
+        doc = self.get_active_document()
+        if doc and doc.interaction_manager:
+            return doc.interaction_manager.on_interaction_select(event)
+        return None
 
     def on_style_change(self):
-        return self.interaction_manager.on_style_change()
+        doc = self.get_active_document()
+        if doc and doc.interaction_manager:
+            return doc.interaction_manager.on_style_change()
+        return None
 
     def move_interaction_up(self):
-        return self.interaction_manager.move_interaction_up()
+        doc = self.get_active_document()
+        if doc and doc.interaction_manager:
+            return doc.interaction_manager.move_interaction_up()
+        return None
 
     def move_interaction_down(self):
-        return self.interaction_manager.move_interaction_down()
+        doc = self.get_active_document()
+        if doc and doc.interaction_manager:
+            return doc.interaction_manager.move_interaction_down()
+        return None
 
     def edit_interaction_label(self):
-        return self.interaction_manager.edit_interaction_label()
+        doc = self.get_active_document()
+        if doc and doc.interaction_manager:
+            return doc.interaction_manager.edit_interaction_label()
+        return None
 
     def delete_interaction(self):
-        return self.interaction_manager.delete_interaction()
+        doc = self.get_active_document()
+        if doc and doc.interaction_manager:
+            return doc.interaction_manager.delete_interaction()
+        return None
 
     # ----------------- Theme & preferences -----------------
     def save_preferences(self):
@@ -429,20 +604,26 @@ class DiagramApp:
         except Exception:
             pass
 
-        # canvas background
+        # propagate palette to all open documents (their widgets & canvases)
         try:
-            self.canvas.configure(bg=palette['canvas_bg'])
+            for doc in getattr(self, 'documents', []):
+                try:
+                    doc.apply_palette(palette)
+                except Exception:
+                    pass
         except Exception:
             pass
-
-        # store current theme
-        self.current_theme = theme_name.lower() if theme_name else 'light'
 
         # re-draw to apply color changes
         try:
-            self.redraw()
+            # redraw active document
+            doc = self.get_active_document()
+            if doc and getattr(doc, 'canvas_controller', None):
+                doc.canvas_controller.redraw()
         except Exception:
             pass
+
+        return
 
     def on_theme_combo_change(self, val=None):
         """Handle changes from the Theme OptionMenu. Accepts either the passed value or reads the StringVar."""
@@ -542,10 +723,21 @@ class DiagramApp:
                 pass
             try:
                 try:
-                    export_canvas(self.canvas, self.root, out_path, transparent=bool(trans_var.get()))
+                    # Prefer active document's canvas
+                    doc = self.get_active_document()
+                    canvas = None
+                    if doc and getattr(doc, 'canvas', None):
+                        canvas = doc.canvas
+                    # If no document canvas available, error out
+                    if canvas is None:
+                        raise RuntimeError('No open document to export')
+                    export_canvas(canvas, self.root, out_path, transparent=bool(trans_var.get()))
                     self.dialogs.info("Export", f"Exported to {out_path}")
                 except Exception as e:
-                    self.dialogs.error("Export error", str(e))
+                    try:
+                        self.dialogs.error("Export error", str(e))
+                    except Exception:
+                        pass
             finally:
                 try:
                     if hasattr(self, 'export_btn'):
@@ -559,7 +751,7 @@ class DiagramApp:
         on_fmt_change()
         dlg.wait_window()
 
-    def show_canvas_context_menu(self, event):
+    def show_canvas_context_menu(self, event, doc: Optional[Document] = None):
         """Show a right-click context menu on the canvas with common actions.
 
         The menu provides 'Add Actor' and 'Export...' entries. We post the menu at
@@ -569,7 +761,7 @@ class DiagramApp:
         menu = None
         try:
             menu = tk.Menu(self.root, tearoff=0)
-            menu.add_command(label='Add Actor', command=lambda: self.add_actor_dialog())
+            menu.add_command(label='Add Actor', command=lambda: (doc.add_actor_dialog() if doc else None))
             menu.add_separator()
             menu.add_command(label='Export...', command=lambda: self.export_dialog())
             self._context_menu = menu
@@ -600,79 +792,42 @@ class DiagramApp:
             except Exception:
                 pass
 
-    # ----------------- Canvas events -----------------
-    def on_canvas_press(self, event):
-        x, y = event.x, event.y
-        actor = self.find_actor_at(x, y)
-        if actor and not self.creating_interaction:
-            # start dragging actor
-            self.dragging_actor = actor
-            self.drag_offset_x = actor.x - x
-        elif actor and self.creating_interaction:
-            # start interaction from this actor
-            self.interaction_start_actor = actor
-        else:
-            # click on blank area - deselect
-            self.dragging_actor = None
-
-    def on_canvas_drag(self, event):
-        x, y = event.x, event.y
-        if self.dragging_actor:
-            # move actor horizontally
-            new_x = x + self.drag_offset_x
-            # clamp into canvas
-            new_x = max(ACTOR_WIDTH//2 + 10, min(CANVAS_WIDTH - ACTOR_WIDTH//2 - 10, new_x))
-            self.dragging_actor.x = new_x
-            self.redraw()
-        elif self.creating_interaction and self.interaction_start_actor:
-            # draw temporary line from start actor center to current mouse
-            sx = self.interaction_start_actor.x
-            sy = INTERACTION_START_Y
-            if self.temp_line:
-                self.canvas.delete(self.temp_line)
-            # preview style should match selected new-interaction style
-            dash = None
+    def _on_tab_changed(self, event):
+        try:
+            sel = event.widget.select()
+            # find document with matching frame
+            for doc in self.documents:
+                if str(doc.frame) == sel:
+                    self.active_document = doc
+                    return
+            # fallback: if index returned, map by index
             try:
-                style = self.new_interaction_style.get()
+                idx = event.widget.index(sel)
+                self.active_document = self.documents[idx] if idx < len(self.documents) else None
             except Exception:
-                style = 'solid'
-            if style == 'dashed':
-                dash = (6, 4)
-            self.temp_line = self.canvas.create_line(sx, sy, x, y, arrow=tk.LAST, dash=dash, fill=self.palette.get('preview_line', PREVIEW_LINE_COLOR))
+                self.active_document = None
+        except Exception:
+            self.active_document = None
 
-    def on_canvas_release(self, event):
-        x, y = event.x, event.y
-        if self.dragging_actor:
-            self.dragging_actor = None
-            return
-        if self.creating_interaction and self.interaction_start_actor:
-            target = self.find_actor_at(x, y)
-            if not target:
-                self.dialogs.info("Invalid", "Release on an actor to create an interaction")
-            else:
-                # create interaction then prompt for a label
-                self.add_interaction(self.interaction_start_actor, target, label="")
-                # prompt user for a label immediately
-                try:
-                    idx = len(self.interactions) - 1
-                    new_label = self.dialogs.ask_string("Interaction label", "Enter label for this interaction:", parent=self.root)
-                    if new_label is not None:
-                        self.interactions[idx].label = new_label
-                        self.interaction_manager.update_interaction_listbox()
-                        self.canvas_controller.redraw()
-                except Exception:
-                    pass
-            self.interaction_start_actor = None
-            if self.temp_line:
-                self.canvas.delete(self.temp_line)
-                self.temp_line = None
+    # Helper to get active document
+    def get_active_document(self) -> Optional[Document]:
+        return getattr(self, 'active_document', None)
 
-    # ----------------- Helpers & drawing -----------------
+    # Delegate methods for single-document operations (kept for compatibility)
     def find_actor_at(self, x, y) -> Optional[Actor]:
-        return self.canvas_controller.find_actor_at(x, y)
+        doc = self.get_active_document()
+        if doc and doc.canvas_controller:
+            return doc.canvas_controller.find_actor_at(x, y)
+        return None
 
     def get_actor_by_id(self, id_: int) -> Optional[Actor]:
-        return self.canvas_controller.get_actor_by_id(id_)
+        doc = self.get_active_document()
+        if doc and doc.canvas_controller:
+            return doc.canvas_controller.get_actor_by_id(id_)
+        return None
 
     def redraw(self):
-        return self.canvas_controller.redraw()
+        doc = self.get_active_document()
+        if doc and doc.canvas_controller:
+            return doc.canvas_controller.redraw()
+        return None
