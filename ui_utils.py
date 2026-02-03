@@ -13,6 +13,10 @@ def center_window(win, parent: Optional[object] = None):
     measurements are available, falls back to screen centering if parent has
     zero size, and ensures the calculated position is non-negative.
     """
+    # initialize locals so fallback code can't reference undefined variables
+    w = h = 0
+    px = py = pw = ph = 0
+
     try:
         # Ensure sizes are computed
         win.update_idletasks()

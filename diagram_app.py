@@ -7,6 +7,8 @@ from tkinter import filedialog
 from tkinter import ttk, font as tkfont
 from typing import List, Optional
 import prefs
+import json
+from pathlib import Path
 from theme import palette_for_theme
 from ui_utils import center_window
 
@@ -109,6 +111,19 @@ class DiagramApp:
             self.menubar = tk.Menu(self.root)
             self.root.config(menu=self.menubar)
 
+            # File menu: New / Open / Save / Save As / Export
+            self._file_menu = tk.Menu(self.menubar, tearoff=0)
+            self.menubar.add_cascade(label='File', menu=self._file_menu)
+            self._file_menu.add_command(label='New', command=lambda: self.new_diagram())
+            self._file_menu.add_command(label='Open...', command=lambda: self.load_diagram_dialog())
+            self._file_menu.add_command(label='Save', command=lambda: self.save())
+            self._file_menu.add_command(label='Save As...', command=lambda: self.save_diagram_dialog())
+            self._file_menu.add_separator()
+            self._file_menu.add_command(label='Export...', command=lambda: self.export_dialog())
+
+            # track current filename for Save/Save As
+            self.current_file: Optional[Path] = None
+
             # Preferences / Theme menu
             self._prefs_menu = tk.Menu(self.menubar, tearoff=0)
             self.menubar.add_cascade(label='Preferences', menu=self._prefs_menu)
@@ -210,6 +225,102 @@ class DiagramApp:
         actor = Actor(id=self.next_actor_id, name=name, x=x)
         self.next_actor_id += 1
         self.actors.append(actor)
+        self.redraw()
+
+    # ----------------- Persistence (save/load) -----------------
+    def new_diagram(self):
+        self.actors = []
+        self.interactions = []
+        self.next_actor_id = 1
+        self.current_file = None
+        try:
+            self.interaction_manager.update_interaction_listbox()
+        except Exception:
+            pass
+        self.redraw()
+
+    def save(self):
+        """Save current diagram to `self.current_file` or prompt for path if not set."""
+        if self.current_file:
+            try:
+                self.save_diagram(str(self.current_file))
+                return True
+            except Exception as e:
+                try:
+                    self.dialogs.error("Save error", str(e))
+                except Exception:
+                    pass
+                return False
+        return self.save_diagram_dialog()
+
+    def save_diagram_dialog(self):
+        f = filedialog.asksaveasfilename(parent=self.root, defaultextension='.json', filetypes=[('Diagram JSON', '*.json')])
+        if not f:
+            return False
+        try:
+            self.save_diagram(f)
+            self.current_file = Path(f)
+            return True
+        except Exception as e:
+            try:
+                self.dialogs.error('Save error', str(e))
+            except Exception:
+                pass
+            return False
+
+    def save_diagram(self, path: str):
+        """Serialize current actors/interactions to JSON at path."""
+        data = {
+            'actors': [{'id': a.id, 'name': a.name, 'x': a.x, 'y': a.y} for a in self.actors],
+            'interactions': [{'source_id': i.source_id, 'target_id': i.target_id, 'label': i.label, 'style': getattr(i, 'style', 'solid')} for i in self.interactions],
+            'next_actor_id': self.next_actor_id,
+        }
+        with open(path, 'w', encoding='utf-8') as fh:
+            json.dump(data, fh, indent=2)
+        return path
+
+    def load_diagram_dialog(self):
+        f = filedialog.askopenfilename(parent=self.root, defaultextension='.json', filetypes=[('Diagram JSON', '*.json')])
+        if not f:
+            return False
+        try:
+            self.load_diagram(f)
+            self.current_file = Path(f)
+            return True
+        except Exception as e:
+            try:
+                self.dialogs.error('Load error', str(e))
+            except Exception:
+                pass
+            return False
+
+    def load_diagram(self, path: str):
+        """Load diagram JSON from path and populate actors/interactions."""
+        with open(path, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+
+        actors = []
+        interactions = []
+        # Validate actors
+        for a in data.get('actors', []):
+            try:
+                actors.append(Actor(id=int(a['id']), name=str(a.get('name', '')), x=int(a.get('x', 100)), y=int(a.get('y', 20))))
+            except Exception:
+                raise RuntimeError('Invalid actor data in file')
+
+        for it in data.get('interactions', []):
+            try:
+                interactions.append(Interaction(source_id=int(it['source_id']), target_id=int(it['target_id']), label=str(it.get('label', '')), style=str(it.get('style', 'solid'))))
+            except Exception:
+                raise RuntimeError('Invalid interaction data in file')
+
+        self.actors = actors
+        self.interactions = interactions
+        self.next_actor_id = int(data.get('next_actor_id', (max((a.id for a in actors), default=0) + 1)))
+        try:
+            self.interaction_manager.update_interaction_listbox()
+        except Exception:
+            pass
         self.redraw()
 
     # ----------------- Interaction management -----------------
