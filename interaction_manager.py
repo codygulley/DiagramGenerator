@@ -89,6 +89,11 @@ class InteractionManager:
                 pass
             return
         idx = sel[0]
+        # clear actor selection when an interaction is selected
+        try:
+            self.app.selected_actor_id = None
+        except Exception:
+            pass
         inter = self.app.interactions[idx]
         try:
             self.app.style_var.set(inter.style)

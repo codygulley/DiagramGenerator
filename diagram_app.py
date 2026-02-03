@@ -71,6 +71,8 @@ class DiagramApp:
         self.actors: List[Actor] = []
         self.interactions: List[Interaction] = []
         self.next_actor_id = 1
+        # currently-selected actor id (used by CanvasController for click selection/highlight)
+        self.selected_actor_id = None
 
         self.dragging_actor: Optional[Actor] = None
         self.drag_offset_x = 0

@@ -5,6 +5,7 @@ receives the `app` instance (DiagramApp) and reads/writes state on it.
 """
 import tkinter as tk
 from typing import Optional
+from math import hypot
 from models import ACTOR_WIDTH, ACTOR_HEIGHT, INTERACTION_START_Y, INTERACTION_V_GAP, CANVAS_HEIGHT
 from models import Actor
 
@@ -13,6 +14,14 @@ class CanvasController:
     def __init__(self, app):
         self.app = app
         self.canvas = app.canvas
+        # transient state for press/drag handling
+        self.pressed_actor: Optional[Actor] = None
+        self.press_x = None
+        self.press_y = None
+        # whether we're currently dragging to create an interaction (from press)
+        self.dragging_interaction = False
+        # small movement threshold to distinguish click vs drag
+        self._drag_threshold = 6
 
     def find_actor_at(self, x, y) -> Optional[Actor]:
         for actor in self.app.actors:
@@ -34,29 +43,61 @@ class CanvasController:
     def on_canvas_press(self, event):
         x, y = event.x, event.y
         actor = self.find_actor_at(x, y)
-        if actor and not self.app.creating_interaction:
-            # start dragging actor
-            self.app.dragging_actor = actor
-            self.app.drag_offset_x = actor.x - x
-        elif actor and self.app.creating_interaction:
-            # start interaction from this actor
-            self.app.interaction_start_actor = actor
-        else:
-            # click on blank area - deselect
+        # Clear any interaction listbox selection when clicking canvas (clicking an actor will select it on release)
+        try:
+            self.app.interaction_listbox.select_clear(0, tk.END)
+            try:
+                self.app.style_menu.configure(state='disabled')
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        if actor:
+            # don't immediately start dragging the actor; record as a potential press
+            self.pressed_actor = actor
+            self.press_x = x
+            self.press_y = y
+            # clear any previous actor selection highlight — we'll set it on release if still a click
+            # but keep the value so redraw can show it if needed
+            # prevent accidental actor-moves by not setting app.dragging_actor here
             self.app.dragging_actor = None
+        else:
+            # click on blank area - deselect actor and interaction
+            self.pressed_actor = None
+            self.press_x = None
+            self.press_y = None
+            try:
+                self.app.selected_actor_id = None
+            except Exception:
+                pass
+            try:
+                # redraw to clear any selection highlight
+                self.redraw()
+            except Exception:
+                pass
 
     def on_canvas_drag(self, event):
         x, y = event.x, event.y
-        if self.app.dragging_actor:
-            # move actor horizontally
-            new_x = x + self.app.drag_offset_x
-            # clamp into canvas
-            new_x = max(ACTOR_WIDTH//2 + 10, min(self.canvas.winfo_width() - ACTOR_WIDTH//2 - 10, new_x))
-            self.app.dragging_actor.x = new_x
-            self.redraw()
-        elif self.app.creating_interaction and self.app.interaction_start_actor:
+        # If we previously pressed on an actor and moved more than threshold, start interaction drag
+        if self.pressed_actor and not self.dragging_interaction:
+            dx = x - (self.press_x or 0)
+            dy = y - (self.press_y or 0)
+            if hypot(dx, dy) >= self._drag_threshold:
+                # begin interaction drag from pressed actor
+                self.dragging_interaction = True
+                try:
+                    self.app.interaction_start_actor = self.pressed_actor
+                except Exception:
+                    self.app.interaction_start_actor = None
+
+        # If we are in interaction-drag mode (either because the checkbox was enabled, or we started one here)
+        if self.dragging_interaction or (self.app.creating_interaction and self.app.interaction_start_actor):
             # draw temporary line from start actor center to current mouse
-            sx = self.app.interaction_start_actor.x
+            start_actor = self.app.interaction_start_actor
+            if not start_actor:
+                return
+            sx = start_actor.x
             sy = INTERACTION_START_Y
             if self.app.temp_line:
                 try:
@@ -72,22 +113,26 @@ class CanvasController:
             if style == 'dashed':
                 dash = (6, 4)
             self.app.temp_line = self.canvas.create_line(sx, sy, x, y, arrow=tk.LAST, dash=dash, fill=self.app.palette.get('preview_line'))
+            return
+
+        # Previously the app allowed dragging actors; per new behavior we don't start actor drag here.
+        # If needed later we can add a modifier key to re-enable actor dragging.
 
     def on_canvas_release(self, event):
         x, y = event.x, event.y
-        if self.app.dragging_actor:
-            self.app.dragging_actor = None
-            return
-        if self.app.creating_interaction and self.app.interaction_start_actor:
+        # If we were dragging to create an interaction (started from a press)
+        if self.dragging_interaction or (self.app.creating_interaction and self.app.interaction_start_actor):
+            # determine which actor (if any) we released over
             target = self.find_actor_at(x, y)
-            if not target:
+            start_actor = self.app.interaction_start_actor
+            if not target or not start_actor:
                 try:
                     self.app.dialogs.info("Invalid", "Release on an actor to create an interaction")
                 except Exception:
                     pass
             else:
                 # create interaction then prompt for a label
-                self.app.add_interaction(self.app.interaction_start_actor, target, label="")
+                self.app.add_interaction(start_actor, target, label="")
                 # prompt user for a label immediately
                 try:
                     idx = len(self.app.interactions) - 1
@@ -98,13 +143,41 @@ class CanvasController:
                         self.redraw()
                 except Exception:
                     pass
-            self.app.interaction_start_actor = None
-            if self.app.temp_line:
-                try:
+            # cleanup
+            self.dragging_interaction = False
+            try:
+                if self.app.temp_line:
                     self.canvas.delete(self.app.temp_line)
+            except Exception:
+                pass
+            self.app.temp_line = None
+            self.app.interaction_start_actor = None
+            self.pressed_actor = None
+            self.press_x = None
+            self.press_y = None
+            return
+
+        # If we pressed on an actor but did not move enough to start a drag -> treat as click (select actor)
+        if self.pressed_actor:
+            try:
+                self.app.selected_actor_id = self.pressed_actor.id
+                # clear any interaction selection
+                try:
+                    self.app.interaction_listbox.select_clear(0, tk.END)
+                    try:
+                        self.app.style_menu.configure(state='disabled')
+                    except Exception:
+                        pass
                 except Exception:
                     pass
-                self.app.temp_line = None
+                self.redraw()
+            except Exception:
+                pass
+
+        # Reset transient press state
+        self.pressed_actor = None
+        self.press_x = None
+        self.press_y = None
 
     # Drawing
     def redraw(self):
@@ -115,6 +188,14 @@ class CanvasController:
             top = actor.y
             right = actor.x + ACTOR_WIDTH // 2
             bottom = actor.y + ACTOR_HEIGHT
+            # if actor is selected, draw an accent outline behind it
+            try:
+                if getattr(self.app, 'selected_actor_id', None) == actor.id:
+                    # slightly larger rect for outline
+                    outline_margin = 3
+                    self.canvas.create_rectangle(left - outline_margin, top - outline_margin, right + outline_margin, bottom + outline_margin, outline=self.app.palette.get('accent', '#4a90e2'), width=3)
+            except Exception:
+                pass
             actor.rect_id = self.canvas.create_rectangle(left, top, right, bottom, fill=self.app.palette.get('actor_fill', '#f0f0ff'), outline=self.app.palette.get('actor_outline', '#000'))
             actor.text_id = self.canvas.create_text(actor.x, actor.y + ACTOR_HEIGHT//2, text=actor.name, fill=self.app.palette.get('actor_text'))
             # lifeline (dashed)
