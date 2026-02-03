@@ -57,7 +57,22 @@ class InteractionManager:
             # No valid selection: disable style/menu and action buttons
             try:
                 if hasattr(self.app, 'style_menu'):
-                    self.app.style_menu.configure(state='disabled')
+                    # set the OptionMenu to disabled state and apply muted colors from the current palette
+                    try:
+                        pal = getattr(self.app, 'palette', None) or {}
+                        muted = pal.get('muted_fg', '#6b7280')
+                        card = pal.get('card_bg', '#ffffff')
+                        self.app.style_menu.configure(state='disabled')
+                        try:
+                            self.app.style_menu.configure(bg=card, fg=muted, activebackground=card)
+                            self.app.style_menu['menu'].configure(bg=card, fg=muted)
+                        except Exception:
+                            pass
+                    except Exception:
+                        try:
+                            self.app.style_menu.configure(state='disabled')
+                        except Exception:
+                            pass
             except Exception:
                 pass
             try:
@@ -109,7 +124,18 @@ class InteractionManager:
         if not sel:
             try:
                 if hasattr(self.app, 'style_menu'):
-                    self.app.style_menu.configure(state='disabled')
+                    pal = getattr(self.app, 'palette', None) or {}
+                    muted = pal.get('muted_fg', '#6b7280')
+                    card = pal.get('card_bg', '#ffffff')
+                    try:
+                        self.app.style_menu.configure(state='disabled')
+                        self.app.style_menu.configure(bg=card, fg=muted, activebackground=card)
+                        self.app.style_menu['menu'].configure(bg=card, fg=muted)
+                    except Exception:
+                        try:
+                            self.app.style_menu.configure(state='disabled')
+                        except Exception:
+                            pass
             except Exception:
                 pass
             # disable action buttons
@@ -139,8 +165,21 @@ class InteractionManager:
         inter = self.app.interactions[idx]
         try:
             self.app.style_var.set(inter.style)
+            # enable and style the OptionMenu according to palette
             try:
-                self.app.style_menu.configure(state='normal')
+                if hasattr(self.app, 'style_menu'):
+                    pal = getattr(self.app, 'palette', None) or {}
+                    text = pal.get('text_fg', '#111827')
+                    card = pal.get('card_bg', '#ffffff')
+                    try:
+                        self.app.style_menu.configure(state='normal')
+                        self.app.style_menu.configure(bg=card, fg=text, activebackground=card)
+                        self.app.style_menu['menu'].configure(bg=card, fg=text, activebackground=pal.get('accent'))
+                    except Exception:
+                        try:
+                            self.app.style_menu.configure(state='normal')
+                        except Exception:
+                            pass
             except Exception:
                 pass
             # enable action buttons

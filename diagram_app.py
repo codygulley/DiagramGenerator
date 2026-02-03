@@ -265,11 +265,13 @@ class DiagramApp:
         """Apply either 'light' or 'dark' palette to the app chrome and widgets."""
         palette = palette_for_theme(theme_name)
         self.palette = palette
+
         # apply root bg
         try:
             self.root.configure(background=palette['app_bg'])
         except Exception:
             pass
+
         # apply ttk styles
         try:
             self.style.configure('TFrame', background=palette['app_bg'])
@@ -277,39 +279,54 @@ class DiagramApp:
             self.style.configure('Card.TLabel', background=palette['card_bg'], font=self.small_font, foreground=palette['text_fg'])
             self.style.configure('TLabel', background=palette['app_bg'], font=self.small_font, foreground=palette['text_fg'])
             self.style.configure('Header.TLabel', background=palette['app_bg'], font=self.header_font, foreground=palette['text_fg'])
-            self.style.configure('Accent.TButton', foreground='white', background=palette['accent'], font=self.small_font)
-            self.style.map('Accent.TButton', background=[('active', palette['accent'])])
+            # Accent button: normal/active should use accent background with white text; disabled should use card background and muted text
+            try:
+                self.style.configure('Accent.TButton', foreground='white', background=palette['accent'], font=self.small_font)
+                self.style.map('Accent.TButton',
+                               background=[('disabled', palette.get('card_bg')), ('active', palette.get('accent')), ('!disabled', palette.get('accent'))],
+                               foreground=[('disabled', palette.get('muted_fg')), ('!disabled', 'white')])
+            except Exception:
+                # Some ttk themes may not accept direct color maps; ignore failures.
+                pass
+
             try:
                 self.style.configure('Card.TCombobox', fieldbackground=palette['card_bg'], background=palette['card_bg'], foreground=palette['text_fg'])
             except Exception:
                 pass
         except Exception:
             pass
-        # update existing widgets that use tk colors
-        # (New Interaction checkbox removed; no per-widget styling needed here)
+
+        # update existing widgets that use tk colors (OptionMenus etc.)
         try:
-            # style the new interaction OptionMenu
-            self._new_interaction_style_menu.configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['card_bg'], highlightthickness=0)
-            self._new_interaction_style_menu['menu'].configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['accent'])
+            # style the new-interaction OptionMenu
+            try:
+                self._new_interaction_style_menu.configure(bg=palette['card_bg'], fg=palette.get('text_fg'), activebackground=palette['card_bg'], highlightthickness=0)
+                self._new_interaction_style_menu['menu'].configure(bg=palette['card_bg'], fg=palette.get('text_fg'), activebackground=palette['accent'])
+            except Exception:
+                pass
         except Exception:
             pass
+
         try:
-            # If an in-UI theme OptionMenu exists (older UI), style it; otherwise ignore.
-            if hasattr(self, 'theme_menu') and self.theme_menu is not None:
+            # style the per-interaction OptionMenu (dropdown used to pick line type for selected interaction)
+            if hasattr(self, 'style_menu') and self.style_menu is not None:
                 try:
-                    self.theme_menu.configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['card_bg'], highlightthickness=0)
-                    self.theme_menu['menu'].configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['accent'])
+                    self.style_menu.configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['card_bg'], highlightthickness=0)
+                    self.style_menu['menu'].configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['accent'])
                 except Exception:
                     pass
         except Exception:
             pass
+
         # canvas background
         try:
             self.canvas.configure(bg=palette['canvas_bg'])
         except Exception:
             pass
+
         # store current theme
         self.current_theme = theme_name.lower() if theme_name else 'light'
+
         # re-draw to apply color changes
         try:
             self.redraw()
