@@ -43,6 +43,27 @@ class CanvasController:
     def on_canvas_press(self, event):
         x, y = event.x, event.y
         actor = self.find_actor_at(x, y)
+        # If the click landed on an interaction canvas item, don't clear selection here;
+        # let the item's tag bindings handle selection. Check current items under pointer.
+        try:
+            items = self.canvas.find_overlapping(x, y, x, y)
+            for it in items:
+                tags = self.canvas.gettags(it) or ()
+                for t in tags:
+                    if isinstance(t, str) and t.startswith('interaction_'):
+                        # parse index from tag 'interaction_{i}' and select that interaction
+                        try:
+                            idx = int(t.split('_', 1)[1])
+                            try:
+                                self.app.interaction_manager.select_interaction(idx)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                        # done handling the click
+                        return
+        except Exception:
+            pass
         # Clear any interaction listbox selection when clicking canvas (clicking an actor will select it on release)
         try:
             self.app.interaction_listbox.select_clear(0, tk.END)
