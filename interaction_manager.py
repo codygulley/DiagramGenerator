@@ -53,12 +53,41 @@ class InteractionManager:
                 self.on_interaction_select()
             except Exception:
                 pass
+        else:
+            # No valid selection: disable style/menu and action buttons
+            try:
+                if hasattr(self.app, 'style_menu'):
+                    self.app.style_menu.configure(state='disabled')
+            except Exception:
+                pass
+            try:
+                if hasattr(self.app, 'up_btn'):
+                    self.app.up_btn.configure(state='disabled')
+                if hasattr(self.app, 'down_btn'):
+                    self.app.down_btn.configure(state='disabled')
+                if hasattr(self.app, 'edit_btn'):
+                    self.app.edit_btn.configure(state='disabled')
+                if hasattr(self.app, 'delete_btn'):
+                    self.app.delete_btn.configure(state='disabled')
+            except Exception:
+                pass
 
     def select_interaction(self, idx: int):
         try:
             self.listbox.select_clear(0, tk.END)
             self.listbox.select_set(idx)
             self.listbox.see(idx)
+            self.on_interaction_select()
+        except Exception:
+            pass
+
+    def deselect_all(self):
+        """Clear any selection and update UI state (disables buttons/menus)."""
+        try:
+            self.listbox.select_clear(0, tk.END)
+        except Exception:
+            pass
+        try:
             self.on_interaction_select()
         except Exception:
             pass
@@ -79,7 +108,20 @@ class InteractionManager:
         sel = self.listbox.curselection()
         if not sel:
             try:
-                self.app.style_menu.configure(state='disabled')
+                if hasattr(self.app, 'style_menu'):
+                    self.app.style_menu.configure(state='disabled')
+            except Exception:
+                pass
+            # disable action buttons
+            try:
+                if hasattr(self.app, 'up_btn'):
+                    self.app.up_btn.configure(state='disabled')
+                if hasattr(self.app, 'down_btn'):
+                    self.app.down_btn.configure(state='disabled')
+                if hasattr(self.app, 'edit_btn'):
+                    self.app.edit_btn.configure(state='disabled')
+                if hasattr(self.app, 'delete_btn'):
+                    self.app.delete_btn.configure(state='disabled')
             except Exception:
                 pass
             # redraw to clear any selection highlight
@@ -99,6 +141,18 @@ class InteractionManager:
             self.app.style_var.set(inter.style)
             try:
                 self.app.style_menu.configure(state='normal')
+            except Exception:
+                pass
+            # enable action buttons
+            try:
+                if hasattr(self.app, 'up_btn'):
+                    self.app.up_btn.configure(state='normal')
+                if hasattr(self.app, 'down_btn'):
+                    self.app.down_btn.configure(state='normal')
+                if hasattr(self.app, 'edit_btn'):
+                    self.app.edit_btn.configure(state='normal')
+                if hasattr(self.app, 'delete_btn'):
+                    self.app.delete_btn.configure(state='normal')
             except Exception:
                 pass
         except Exception:

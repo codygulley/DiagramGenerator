@@ -151,10 +151,15 @@ class DiagramApp:
         # Place action buttons and style combobox inside the list_card so they sit on the white card
         btn_frame = ttk.Frame(list_card, style='Card.TFrame')
         btn_frame.pack(padx=8, pady=(6,8), fill=tk.X)
-        ttk.Button(btn_frame, text="Up", command=self.move_interaction_up, style='Accent.TButton').grid(row=0, column=0, padx=4)
-        ttk.Button(btn_frame, text="Down", command=self.move_interaction_down, style='Accent.TButton').grid(row=0, column=1, padx=4)
-        ttk.Button(btn_frame, text="Edit", command=self.edit_interaction_label, style='Accent.TButton').grid(row=0, column=2, padx=4)
-        ttk.Button(btn_frame, text="Delete", command=self.delete_interaction, style='Accent.TButton').grid(row=0, column=3, padx=4)
+        # Action buttons for interactions — keep references so they can be enabled/disabled
+        self.up_btn = ttk.Button(btn_frame, text="Up", command=self.move_interaction_up, style='Accent.TButton')
+        self.up_btn.grid(row=0, column=0, padx=4)
+        self.down_btn = ttk.Button(btn_frame, text="Down", command=self.move_interaction_down, style='Accent.TButton')
+        self.down_btn.grid(row=0, column=1, padx=4)
+        self.edit_btn = ttk.Button(btn_frame, text="Edit", command=self.edit_interaction_label, style='Accent.TButton')
+        self.edit_btn.grid(row=0, column=2, padx=4)
+        self.delete_btn = ttk.Button(btn_frame, text="Delete", command=self.delete_interaction, style='Accent.TButton')
+        self.delete_btn.grid(row=0, column=3, padx=4)
         # Style combobox for the selected interaction (styled to match card)
         self.style_var = tk.StringVar(value="solid")
         # Replace the ttk Combobox with a tk.OptionMenu to ensure consistent styling in dark theme
@@ -163,6 +168,14 @@ class DiagramApp:
         # disable until an interaction is selected
         try:
             self.style_menu.configure(state='disabled')
+        except Exception:
+            pass
+        # disable action buttons until an interaction is selected
+        try:
+            self.up_btn.configure(state='disabled')
+            self.down_btn.configure(state='disabled')
+            self.edit_btn.configure(state='disabled')
+            self.delete_btn.configure(state='disabled')
         except Exception:
             pass
 

@@ -67,10 +67,16 @@ class CanvasController:
         # Clear any interaction listbox selection when clicking canvas (clicking an actor will select it on release)
         try:
             self.app.interaction_listbox.select_clear(0, tk.END)
+            # Ensure the interaction manager updates UI state (disables buttons/menus)
             try:
-                self.app.style_menu.configure(state='disabled')
+                self.app.interaction_manager.on_interaction_select()
             except Exception:
-                pass
+                try:
+                    # Fallback: directly disable known widgets
+                    if hasattr(self.app, 'style_menu'):
+                        self.app.style_menu.configure(state='disabled')
+                except Exception:
+                    pass
         except Exception:
             pass
 
