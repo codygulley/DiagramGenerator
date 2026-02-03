@@ -132,15 +132,11 @@ class DiagramApp:
         self.new_interaction_style = tk.StringVar(value="solid")
         style_frame = ttk.Frame(controls_card, style='Card.TFrame')
         style_frame.pack(padx=8, pady=(0,8), anchor=tk.NW, fill=tk.X)
-        # Use tk.Radiobuttons with explicit white background to match the card
+        # Use a dropdown (OptionMenu) for new interaction style (defaults to 'solid')
         tk.Label(style_frame, text="New Interaction Style:", bg=self.palette.get('card_bg'), fg=self.palette.get('text_fg'), font=self.small_font).pack(side=tk.LEFT)
-        r1 = tk.Radiobutton(style_frame, text="Solid", variable=self.new_interaction_style, value="solid", bd=0, highlightthickness=0, bg=self.palette.get('card_bg'), activebackground=self.palette.get('card_bg'), fg=self.palette.get('text_fg'), selectcolor=self.palette.get('accent'), activeforeground=self.palette.get('text_fg'))
-        r1.pack(side=tk.LEFT, padx=4)
-        r2 = tk.Radiobutton(style_frame, text="Dashed", variable=self.new_interaction_style, value="dashed", bd=0, highlightthickness=0, bg=self.palette.get('card_bg'), activebackground=self.palette.get('card_bg'), fg=self.palette.get('text_fg'), selectcolor=self.palette.get('accent'), activeforeground=self.palette.get('text_fg'))
-        r2.pack(side=tk.LEFT, padx=4)
-        # keep references so we can update colours when theme changes
-        self._theme_r1 = r1
-        self._theme_r2 = r2
+        self._new_interaction_style_menu = tk.OptionMenu(style_frame, self.new_interaction_style, 'solid', 'dashed', command=lambda *_: None)
+        self._new_interaction_style_menu.config(borderwidth=0, highlightthickness=0)
+        self._new_interaction_style_menu.pack(side=tk.LEFT, padx=4)
 
         ttk.Label(self.right_frame, text="Interactions:", style='Header.TLabel').pack(padx=8, pady=(12,0), anchor=tk.NW)
         # Keep a simple Listbox but place it inside a styled frame
@@ -282,16 +278,9 @@ class DiagramApp:
         except Exception:
             pass
         try:
-            # radiobuttons
-            self._theme_r1.configure(bg=palette['card_bg'], activebackground=palette['card_bg'], fg=palette['text_fg'], selectcolor=palette['accent'], activeforeground=palette['text_fg'])
-            self._theme_r2.configure(bg=palette['card_bg'], activebackground=palette['card_bg'], fg=palette['text_fg'], selectcolor=palette['accent'], activeforeground=palette['text_fg'])
-        except Exception:
-            pass
-        # combobox
-        try:
-            # style OptionMenus (widget and menu)
-            self.style_menu.configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['card_bg'], highlightthickness=0)
-            self.style_menu['menu'].configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['accent'])
+            # style the new interaction OptionMenu
+            self._new_interaction_style_menu.configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['card_bg'], highlightthickness=0)
+            self._new_interaction_style_menu['menu'].configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['accent'])
         except Exception:
             pass
         try:

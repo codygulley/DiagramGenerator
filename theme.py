@@ -22,13 +22,13 @@ LIGHT_PALETTE = {
 }
 
 DARK_PALETTE = {
-    'app_bg': '#111217',
-    'card_bg': '#111217',
+    'app_bg': '#444444',
+    'card_bg': '#444444',
     'text_fg': '#e6eef6',
     'muted_fg': '#9aa3ad',
     'accent': '#4a90e2',
     'card_border': '#0b1116',
-    'canvas_bg': '#111217',
+    'canvas_bg': '#444444',
     'actor_fill': '#181b22',
     'actor_outline': '#262a31',
     'actor_text': '#e6eef6',

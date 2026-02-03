@@ -11,13 +11,25 @@ class InteractionManager:
         self.app = app
         self.listbox = app.interaction_listbox
 
-    def update_interaction_listbox(self):
+    def update_interaction_listbox(self, selected_idx_override: int = None):
+        """Rebuild the listbox contents.
+
+        If `selected_idx_override` is provided, that index will be selected after
+        rebuilding (if it's in range). Otherwise the previously selected index is
+        restored when possible.
+        """
         # preserve current selection index
         try:
             cur_sel = self.listbox.curselection()
             cur_idx = cur_sel[0] if cur_sel else None
         except Exception:
             cur_idx = None
+
+        # prefer explicit override when provided
+        if selected_idx_override is not None:
+            target_idx = selected_idx_override
+        else:
+            target_idx = cur_idx
 
         self.listbox.delete(0, tk.END)
         for i, inter in enumerate(self.app.interactions):
@@ -28,11 +40,16 @@ class InteractionManager:
             s = f"{i+1}. {src_name} -> {tgt_name} [{inter.style}]: {inter.label}"
             self.listbox.insert(tk.END, s)
 
-        # restore selection if possible
-        if cur_idx is not None and 0 <= cur_idx < len(self.app.interactions):
+        # restore/establish selection if possible
+        if target_idx is not None and 0 <= target_idx < len(self.app.interactions):
             try:
-                self.listbox.select_set(cur_idx)
-                # make sure dropdown reflects selection
+                # clear any previous selection and set the intended one exactly once
+                try:
+                    self.listbox.select_clear(0, tk.END)
+                except Exception:
+                    pass
+                self.listbox.select_set(target_idx)
+                # make sure dropdown & canvas reflect selection
                 self.on_interaction_select()
             except Exception:
                 pass
@@ -54,7 +71,8 @@ class InteractionManager:
         if new_label is None:
             return
         inter.label = new_label
-        self.update_interaction_listbox()
+        # keep the same item selected after update
+        self.update_interaction_listbox(selected_idx_override=idx)
         self.app.canvas_controller.redraw()
 
     def on_interaction_select(self, event=None):
@@ -97,7 +115,8 @@ class InteractionManager:
         inter = self.app.interactions[idx]
         if inter.style != new_style:
             inter.style = new_style
-            self.update_interaction_listbox()
+            # keep selection stable
+            self.update_interaction_listbox(selected_idx_override=idx)
             self.app.canvas_controller.redraw()
 
     def move_interaction_up(self):
@@ -108,13 +127,8 @@ class InteractionManager:
         if idx == 0:
             return
         self.app.interactions[idx-1], self.app.interactions[idx] = self.app.interactions[idx], self.app.interactions[idx-1]
-        self.update_interaction_listbox()
-        # ensure only the intended item is selected (clear any previous selection first)
-        try:
-            self.listbox.select_clear(0, tk.END)
-        except Exception:
-            pass
-        self.listbox.select_set(idx-1)
+        # update list and select new (moved) index
+        self.update_interaction_listbox(selected_idx_override=idx-1)
         self.app.canvas_controller.redraw()
 
     def move_interaction_down(self):
@@ -125,13 +139,8 @@ class InteractionManager:
         if idx >= len(self.app.interactions)-1:
             return
         self.app.interactions[idx+1], self.app.interactions[idx] = self.app.interactions[idx], self.app.interactions[idx+1]
-        self.update_interaction_listbox()
-        # ensure only the intended item is selected (clear any previous selection first)
-        try:
-            self.listbox.select_clear(0, tk.END)
-        except Exception:
-            pass
-        self.listbox.select_set(idx+1)
+        # update list and select new (moved) index
+        self.update_interaction_listbox(selected_idx_override=idx+1)
         self.app.canvas_controller.redraw()
 
     def edit_interaction_label(self):
@@ -144,7 +153,8 @@ class InteractionManager:
         if new_label is None:
             return
         inter.label = new_label
-        self.update_interaction_listbox()
+        # keep same item selected
+        self.update_interaction_listbox(selected_idx_override=idx)
         self.app.canvas_controller.redraw()
 
     def delete_interaction(self):
@@ -153,5 +163,11 @@ class InteractionManager:
             return
         idx = sel[0]
         del self.app.interactions[idx]
-        self.update_interaction_listbox()
+        # after deletion, select the next item if any, or the previous one
+        new_sel = None
+        if idx < len(self.app.interactions):
+            new_sel = idx
+        elif len(self.app.interactions) > 0:
+            new_sel = len(self.app.interactions) - 1
+        self.update_interaction_listbox(selected_idx_override=new_sel)
         self.app.canvas_controller.redraw()
