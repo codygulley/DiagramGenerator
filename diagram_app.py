@@ -121,15 +121,6 @@ class DiagramApp:
         controls_card = ttk.Frame(self.right_frame, style='Card.TFrame')
         controls_card.pack(padx=8, pady=(4,8), fill=tk.X)
 
-        self.new_interaction_var = tk.IntVar()
-        # Use a tk.Checkbutton with explicit white background so it visually sits on the card
-        self.new_interaction_cb = tk.Checkbutton(controls_card, text="New Interaction (drag)", variable=self.new_interaction_var, command=self.toggle_new_interaction, bd=0, highlightthickness=0, bg=self.palette.get('card_bg'), activebackground=self.palette.get('card_bg'), fg=self.palette.get('text_fg'), selectcolor=self.palette.get('accent'))
-        try:
-            self.new_interaction_cb.config(font=self.small_font)
-        except Exception:
-            pass
-        self.new_interaction_cb.pack(padx=8, pady=8, anchor=tk.NW, fill=tk.X)
-
         # Style selector for new interactions (placed on controls_card so background is white)
         self.new_interaction_style = tk.StringVar(value="solid")
         style_frame = ttk.Frame(controls_card, style='Card.TFrame')
@@ -193,14 +184,6 @@ class DiagramApp:
         self.redraw()
 
     # ----------------- Interaction management -----------------
-    def toggle_new_interaction(self):
-        self.creating_interaction = bool(self.new_interaction_var.get())
-        if not self.creating_interaction:
-            self.interaction_start_actor = None
-            if self.temp_line:
-                self.canvas.delete(self.temp_line)
-                self.temp_line = None
-
     def add_interaction(self, source: Actor, target: Actor, label: str = ""):
         if source.id == target.id:
             self.dialogs.info("Invalid", "Cannot create interaction to the same actor")
@@ -274,11 +257,7 @@ class DiagramApp:
         except Exception:
             pass
         # update existing widgets that use tk colors
-        try:
-            # checkbutton background and selection color
-            self.new_interaction_cb.configure(bg=palette['card_bg'], activebackground=palette['card_bg'], fg=palette['text_fg'], selectcolor=palette['accent'], activeforeground=palette['text_fg'])
-        except Exception:
-            pass
+        # (New Interaction checkbox removed; no per-widget styling needed here)
         try:
             # style the new interaction OptionMenu
             self._new_interaction_style_menu.configure(bg=palette['card_bg'], fg=palette['text_fg'], activebackground=palette['card_bg'], highlightthickness=0)
